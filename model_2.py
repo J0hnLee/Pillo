@@ -6,20 +6,17 @@ cap = cv2.VideoCapture(1)
 if not cap.isOpened():
     print("❌ 無法開啟攝影機")
     exit()
-
 # 設定 ROI 區域 (x, y, w, h)
-roi = (500, 500, 500, 500)  # 你可以依實際畫面調整
+roi = (100, 100, 400, 300)  # 你可以依實際畫面調整
 
 print("📸 開始即時偵測，按 q 離開")
-
 while True:
     ret, frame = cap.read()
     if not ret:
         break
-
+    
     x, y, w, h = roi
     roi_img = frame[y:y+h, x:x+w]
-
     # 灰階
     gray = cv2.cvtColor(roi_img, cv2.COLOR_BGR2GRAY)
 
@@ -44,14 +41,11 @@ while True:
     cv2.putText(display, f"數量: {count}", (x, y-10),
                 cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
 
+
     # 顯示畫面
-    cv2.imshow('即時辨識 - 原始畫面', display)
-    cv2.imshow('ROI - 邊緣偵測', edges)
+    cv2.namedWindow('即時辨識 - 原始畫面', cv2.WINDOW_NORMAL)
+    cv2.imshow('即時辨識 - 原始畫面', frame)
 
     # 按 q 離開
     if cv2.waitKey(1) & 0xFF == ord('q'):
         break
-
-# 結束
-cap.release()
-cv2.destroyAllWindows()

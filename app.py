@@ -1,3 +1,4 @@
+# 前後端混合式開發
 from flask import Flask, render_template_string, Response, request, jsonify
 import cv2
 import numpy as np
@@ -466,9 +467,9 @@ def video_feed():
 
 if __name__ == '__main__':
     print("🚀 啟動輪廓偵測網頁應用程式")
-    print("📱 本機存取: http://localhost:5000")
-    print("🌐 局域網存取: http://[您的IP地址]:5000")
+    print("📱 本機存取: http://localhost:5001")
+    print("🌐 局域網存取: http://[您的IP地址]:5001")
     print("💡 按 Ctrl+C 停止服務")
 
     # 允許局域網存取
-    app.run(host='0.0.0.0', port=5000, debug=False, threaded=True)
+    app.run(host='0.0.0.0', port=5001, debug=False, threaded=True)

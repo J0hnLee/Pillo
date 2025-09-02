@@ -12,3 +12,4 @@ a pill count assistant
 #    cd frontend
 #    npm install
 #    npm start
+#    pnpm run dev --host

@@ -11,6 +11,12 @@ from datetime import datetime
 import uvicorn
 import io
 import base64
+from typing import Optional
+
+try:
+    from ultralytics import YOLO
+except Exception:
+    YOLO = None
 
 app = FastAPI(title="輪廓偵測 API", version="1.0.0")
 
@@ -36,6 +42,7 @@ class CameraController:
         self.algorithm = "algorithm2"
         self.latest_frame = None
         self.frame_lock = threading.Lock()
+        self.yolo_model: Optional["YOLO"] = None
         
     def start_camera(self, camera_index=0):
         try:
@@ -50,9 +57,15 @@ class CameraController:
                 return False, "無法開啟任何攝影機"
                 
             # 設定攝影機參數
+            # 設定 30 FPS 與解析度
             self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-            self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+            self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 360)
             self.cap.set(cv2.CAP_PROP_FPS, 30)
+            # 減少內部緩衝避免延遲累積（若相機驅動支援）
+            try:
+                self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+            except Exception:
+                pass
             
             self.is_streaming = True
             
@@ -75,7 +88,10 @@ class CameraController:
             
             if self.detection_active:
                 try:
-                    count = self.process_contours(frame, display_frame)
+                    if self.algorithm == "yolo11":
+                        count = self.process_yolo(frame, display_frame)
+                    else:
+                        count = self.process_contours(frame, display_frame)
                     self.current_count = count
                 except Exception as e:
                     print(f"處理錯誤: {e}")
@@ -87,7 +103,8 @@ class CameraController:
             with self.frame_lock:
                 self.latest_frame = display_frame.copy()
                 
-            time.sleep(1/30)  # 控制幀率
+            # 控制幀率（30 FPS）
+            time.sleep(1/30)
     
     def stop_camera(self):
         self.is_streaming = False
@@ -106,8 +123,8 @@ class CameraController:
                 return None
             frame = self.latest_frame.copy()
             
-        # 編碼為 JPEG
-        ret, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
+        # 編碼為 JPEG（降低品質減小傳輸與編碼負載）
+        ret, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 60])
         if ret:
             # 轉換為 base64
             img_base64 = base64.b64encode(buffer).decode('utf-8')
@@ -137,6 +154,38 @@ class CameraController:
         cv2.putText(display_frame, f"Count: {count}", (20, 50),
                    cv2.FONT_HERSHEY_SIMPLEX, 1.5, (0, 0, 255), 3, cv2.LINE_AA)
         
+        return count
+
+    def ensure_yolo_loaded(self):
+        if self.yolo_model is None:
+            if YOLO is None:
+                raise RuntimeError("Ultralytics YOLO 未安裝，請在後端安裝 ultralytics 套件")
+            # 載入本地模型檔
+            self.yolo_model = YOLO("my_model.pt")
+
+    def process_yolo(self, frame, display_frame):
+        # 確保模型已載入
+        self.ensure_yolo_loaded()
+        # BGR -> RGB
+        rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        # 推論（設定較快的參數）
+        results = self.yolo_model.predict(source=rgb, verbose=False, imgsz=640, conf=0.25, iou=0.45, device=0 if cv2.cuda.getCudaEnabledDeviceCount() > 0 else 'cpu')
+        # 取第一張結果
+        r = results[0]
+        boxes = r.boxes
+        count = 0
+        if boxes is not None:
+            for box in boxes:
+                x1, y1, x2, y2 = box.xyxy[0].cpu().numpy().astype(int)
+                conf = float(box.conf[0].cpu().numpy()) if box.conf is not None else 0.0
+                cls_id = int(box.cls[0].cpu().numpy()) if box.cls is not None else -1
+                count += 1
+                # 畫框與標籤
+                cv2.rectangle(display_frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
+                label = f"ID{cls_id} {conf:.2f}"
+                cv2.putText(display_frame, label, (x1, max(y1-5, 10)), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 0), 2)
+        # 顯示數量
+        cv2.putText(display_frame, f"YOLO Count: {count}", (20, 50), cv2.FONT_HERSHEY_SIMPLEX, 1.5, (0, 0, 255), 3, cv2.LINE_AA)
         return count
 
 # 創建攝影機控制器實例
@@ -189,10 +238,8 @@ async def get_status():
 async def get_video_frame():
     """獲取當前視訊幀"""
     frame_data = camera_controller.get_frame_as_base64()
-    if frame_data:
-        return {"frame": frame_data}
-    else:
-        raise HTTPException(status_code=404, detail="無法獲取視訊幀")
+    # 即使暫時沒有幀也回 200 並給予 null，避免前端把連線標記為錯誤
+    return {"frame": frame_data if frame_data else None}
 
 if __name__ == "__main__":
     print("🚀 啟動 FastAPI 後端服務")

@@ -1,6 +1,4 @@
 import { useState,useEffect, useCallback } from 'react'
-import reactLogo from './assets/react.svg'
-import viteLogo from '/vite.svg'
 import './App.css'
 import React from "react";
 import {
@@ -26,8 +24,8 @@ function App() {
   const [isLoading, setIsLoading] = useState(false);
   const [connectionStatus, setConnectionStatus] = useState("connecting");
 
-  // API 調用函數
-  const apiCall = async (endpoint, method = "GET", body = null) => {
+  // API 調用函數（useCallback 以穩定依賴）
+  const apiCall = useCallback(async (endpoint, method = "GET", body = null) => {
     try {
       const config = {
         method,
@@ -53,17 +51,17 @@ function App() {
       setConnectionStatus("error");
       throw error;
     }
-  };
+  }, []);
 
   // 檢查連接狀態
-  const checkConnection = async () => {
+  const checkConnection = useCallback(async () => {
     try {
       await apiCall("/");
       setConnectionStatus("connected");
-    } catch (error) {
+    } catch {
       setConnectionStatus("error");
     }
-  };
+  }, [apiCall]);
 
   // 獲取狀態更新
   const fetchStatus = useCallback(async () => {
@@ -74,19 +72,27 @@ function App() {
     } catch (error) {
       console.error("獲取狀態失敗:", error);
     }
-  }, []);
+  }, [apiCall]);
 
   // 獲取視訊幀
+  const [isFetchingFrame, setIsFetchingFrame] = useState(false);
   const fetchVideoFrame = useCallback(async () => {
-    if (!status.is_streaming) return;
+    if (!status.is_streaming || isFetchingFrame) return;
 
     try {
+      setIsFetchingFrame(true);
       const frameData = await apiCall("/api/video/frame");
-      setVideoFrame(frameData.frame);
+      if (frameData && frameData.frame) {
+        setVideoFrame(frameData.frame);
+      }
+      // 若為 null，跳過更新，避免誤判為錯誤
     } catch (error) {
-      console.error("獲取視訊幀失敗:", error);
+      // 不要把取幀錯誤視為連線錯誤，僅記錄
+      console.debug("取幀中斷或逾時:", error?.message || error);
+    } finally {
+      setIsFetchingFrame(false);
     }
-  }, [status.is_streaming]);
+  }, [status.is_streaming, isFetchingFrame, apiCall]);
 
   // 攝影機控制
   const handleStartCamera = async () => {
@@ -145,7 +151,7 @@ function App() {
     checkConnection();
     const connectionInterval = setInterval(checkConnection, 5000);
     return () => clearInterval(connectionInterval);
-  }, []);
+  }, [checkConnection]);
 
   useEffect(() => {
     if (connectionStatus === "connected") {
@@ -157,7 +163,7 @@ function App() {
 
   useEffect(() => {
     if (status.is_streaming) {
-      const frameInterval = setInterval(fetchVideoFrame, 100); // 10 FPS
+      const frameInterval = setInterval(fetchVideoFrame, 33); // ~30 FPS
       return () => clearInterval(frameInterval);
     }
   }, [status.is_streaming, fetchVideoFrame]);
@@ -225,6 +231,17 @@ function App() {
                     className="w-4 h-4"
                   />
                   <span>算法二 (Canny 邊緣偵測)</span>
+                </label>
+                <label className="flex items-center gap-3 cursor-pointer">
+                  <input
+                    type="radio"
+                    name="algorithm"
+                    value="yolo11"
+                    checked={status.algorithm === "yolo11"}
+                    onChange={(e) => handleAlgorithmChange(e.target.value)}
+                    className="w-4 h-4"
+                  />
+                  <span>算法三 (YOLOv11)</span>
                 </label>
               </div>
             </div>

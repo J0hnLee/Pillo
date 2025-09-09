@@ -44,17 +44,31 @@ function App() {
   const webcamRef = useRef(null);
   const processingIntervalRef = useRef(null);
 
+  // 新增：裝置列舉與選擇
+  const [videoDevices, setVideoDevices] = useState([]);
+  const [selectedDeviceId, setSelectedDeviceId] = useState(null);
+
   // 環境與能力檢查
   const isSecureContext =
     (typeof window !== "undefined" && window.isSecureContext) ||
     (typeof window !== "undefined" &&
       (window.location.hostname === "localhost" ||
-        window.location.hostname === "127.0.0.1"));
+        window.location.hostname === "127.0.0.1" ||
+        window.location.hostname?.startsWith("192.168.") ||
+        window.location.hostname?.startsWith("10.") ||
+        window.location.hostname?.startsWith("172.")));
   const hasGetUserMedia =
     typeof navigator !== "undefined" &&
     navigator.mediaDevices &&
     typeof navigator.mediaDevices.getUserMedia === "function";
-  const cameraSupported = isSecureContext && !!hasGetUserMedia;
+  
+  const hasEnumerateDevices =
+    typeof navigator !== "undefined" &&
+    navigator.mediaDevices &&
+    typeof navigator.mediaDevices.enumerateDevices === "function";
+  
+  // 對於區域網使用，放寬安全上下文要求，但需要檢查 API 支援
+  const cameraSupported = !!hasGetUserMedia;
 
   // 設備檢測
   const detectDevice = useCallback(() => {
@@ -80,7 +94,9 @@ function App() {
   // 檢查連接狀態
   const checkConnection = useCallback(async () => {
     try {
+      console.log("檢查連接狀態:", API_BASE_URL);
       const response = await fetch(`${API_BASE_URL}/`);
+
       if (response.ok) {
         setConnectionStatus("connected");
         return true;
@@ -98,6 +114,7 @@ function App() {
   const fetchStatus = useCallback(async () => {
     try {
       const response = await fetch(`${API_BASE_URL}/api/status`);
+      console.log("獲取狀態:", response);
       if (response.ok) {
         const statusData = await response.json();
         setStatus((prev) => ({
@@ -237,19 +254,58 @@ function App() {
     }
   }, []);
 
-  // 開始攝影
+  // 新增：列舉裝置並選擇最佳攝影機
+  const enumerateAndSelectCamera = useCallback(async () => {
+    if (!hasEnumerateDevices) {
+      console.warn("瀏覽器不支援 enumerateDevices API");
+      setVideoDevices([]);
+      setSelectedDeviceId(null);
+      return;
+    }
+
+    try {
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      const videoInputs = devices.filter((d) => d.kind === "videoinput");
+      setVideoDevices(videoInputs);
+
+      if (videoInputs.length === 0) {
+        setSelectedDeviceId(null);
+        return;
+      }
+
+      const deviceType = detectDevice().device_type;
+
+      // 嘗試優先選擇後鏡頭（從 label 推斷；需先取得權限才會有 label）
+      let preferred = null;
+      if (deviceType === "mobile") {
+        preferred =
+          videoInputs.find((d) => /back|rear|environment/i.test(d.label)) ||
+          null;
+      }
+
+      // 桌機或找不到後鏡頭就用第一個
+      const chosen = preferred || videoInputs[0];
+      setSelectedDeviceId(chosen.deviceId || null);
+    } catch (err) {
+      console.error("列舉裝置失敗:", err);
+      setVideoDevices([]);
+      setSelectedDeviceId(null);
+    }
+  }, [detectDevice, hasEnumerateDevices]);
+
+  // 開始攝影（可重用）
   const startCamera = useCallback(() => {
     if (!cameraSupported) {
-      const reason = !isSecureContext
-        ? "頁面非安全來源。請使用 HTTPS 或 localhost 開啟此網站。"
-        : "瀏覽器不支援 getUserMedia。請更換支援的瀏覽器。";
+      const reason = !hasGetUserMedia
+        ? "瀏覽器不支援 getUserMedia。請更換支援的瀏覽器。"
+        : "攝影機功能不可用。";
       setDebugInfo(`無法啟動攝影機：${reason}`);
       return;
     }
     setCameraStarted(true);
     setDebugInfo("攝影機已啟動");
     console.log("攝影機已啟動");
-  }, []);
+  }, [cameraSupported, hasGetUserMedia]);
 
   // 停止攝影
   const stopCamera = useCallback(() => {
@@ -271,8 +327,11 @@ function App() {
   const onUserMedia = useCallback(() => {
     console.log("攝影機已準備就緒");
     setCameraReady(true);
-    setDebugInfo("攝影機已準備就緒，點擊開始攝影");
-  }, []);
+    setDebugInfo("攝影機已準備就緒");
+
+    // 取得權限後，labels 會可用，再次列舉以挑選最佳裝置
+    enumerateAndSelectCamera();
+  }, [enumerateAndSelectCamera]);
 
   const onUserMediaError = useCallback((error) => {
     console.error("攝影機錯誤:", error);
@@ -281,23 +340,39 @@ function App() {
     setCameraStarted(false);
   }, []);
 
-  // 初始化
+  // 初始化：檢查連線、狀態、並自動請求攝影機權限與啟動
   useEffect(() => {
     const initializeApp = async () => {
       await checkConnection();
       await fetchStatus();
+
       if (!cameraSupported) {
-        const reason = !isSecureContext
-          ? "頁面非安全來源。請使用 HTTPS 或 localhost 開啟此網站。"
-          : "瀏覽器不支援 getUserMedia。請更換支援的瀏覽器。";
+        const reason = !hasGetUserMedia
+          ? "瀏覽器不支援 getUserMedia。請更換支援的瀏覽器。"
+          : "攝影機功能不可用。";
         setDebugInfo(`攝影機不可用：${reason}`);
+        return;
       }
+
+      // 只有在支援 getUserMedia 時才嘗試請求權限
+      if (hasGetUserMedia) {
+        try {
+          // 先行請求權限，確保 enumerateDevices 取得完整 label
+          await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+        } catch (err) {
+          console.warn("預請求攝影機權限失敗，但仍嘗試啟動:", err);
+        }
+      }
+
+      await enumerateAndSelectCamera();
+      startCamera();
     };
+
     initializeApp();
 
     const connectionInterval = setInterval(checkConnection, 5000);
     return () => clearInterval(connectionInterval);
-  }, [checkConnection, fetchStatus]);
+  }, [checkConnection, fetchStatus, cameraSupported, isSecureContext, enumerateAndSelectCamera, startCamera, hasGetUserMedia, hasEnumerateDevices]);
 
   // 清理
   useEffect(() => {
@@ -308,11 +383,24 @@ function App() {
     };
   }, []);
 
+  // 監聽裝置變更（熱插拔）
+  useEffect(() => {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.addEventListener) return;
+    const handler = () => enumerateAndSelectCamera();
+    navigator.mediaDevices.addEventListener("devicechange", handler);
+    return () => {
+      navigator.mediaDevices.removeEventListener("devicechange", handler);
+    };
+  }, [enumerateAndSelectCamera]);
+
   const getStatusText = () => {
     if (connectionStatus === "error") return "無法連接到服務器";
     if (connectionStatus === "connecting") return "正在連接...";
-    if (!cameraSupported) return "瀏覽器不支援或需使用 HTTPS/localhost";
-    if (!cameraStarted) return "攝影機已準備，請點擊開始攝影";
+    if (!cameraSupported) {
+      if (!hasGetUserMedia) return "瀏覽器不支援攝影機功能";
+      return "攝影機功能不可用";
+    }
+    if (!cameraStarted) return "正在請求攝影機權限/啟動中...";
     if (status.detection_active) return "正在進行偵測...";
     return "攝影機運行中，偵測已暫停";
   };
@@ -323,49 +411,6 @@ function App() {
     if (status.detection_active) return "text-green-400";
     return "text-blue-400";
   };
-
-  // 如果連接失敗，顯示錯誤頁面
-  if (connectionStatus === "error") {
-    return (
-      <div className="min-h-screen bg-gradient-to-br from-red-900 via-purple-900 to-pink-900 text-white p-4">
-        <div className="max-w-4xl mx-auto">
-          <div className="text-center mb-8">
-            <h1 className="text-4xl font-bold mb-4 flex items-center justify-center gap-3">
-              <Camera size={40} />
-              連接錯誤
-            </h1>
-            <div className="bg-white/10 backdrop-blur-md rounded-xl p-6">
-              <h2 className="text-2xl font-semibold mb-4">
-                無法連接到後端服務
-              </h2>
-              <div className="space-y-4 text-left">
-                <p>
-                  <strong>API 地址:</strong> {API_BASE_URL}
-                </p>
-                <div className="mt-6">
-                  <h3 className="text-lg font-semibold mb-2">解決方案:</h3>
-                  <ul className="list-disc list-inside space-y-2">
-                    <li>確保後端服務正在運行 (python main.py)</li>
-                    <li>檢查後端是否在端口 8000 上運行</li>
-                    <li>確認防火牆沒有阻擋連接</li>
-                  </ul>
-                </div>
-                <button
-                  onClick={() => {
-                    checkConnection();
-                    fetchStatus();
-                  }}
-                  className="mt-4 px-6 py-2 bg-blue-600 hover:bg-blue-700 rounded-lg transition-colors text-white font-medium"
-                >
-                  重新連接
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-    );
-  }
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-indigo-900 via-purple-900 to-pink-900 text-white p-2 md:p-4">
@@ -382,6 +427,12 @@ function App() {
             <Wifi size={20} />
             {getStatusText()}
           </div>
+
+          {!isSecureContext && (
+            <div className="mt-2 text-sm text-blue-300">
+              區域網模式：此應用程式已配置為在區域網環境下使用 HTTP 協議。
+            </div>
+          )}
         </div>
 
         {/* 控制面板 */}
@@ -436,7 +487,7 @@ function App() {
               <div className="flex flex-col md:flex-row flex-wrap gap-2 md:gap-3">
                 <button
                   onClick={startCamera}
-                  disabled={!cameraSupported || !cameraReady || cameraStarted}
+                  disabled={!cameraSupported || cameraStarted}
                   className="flex items-center justify-center gap-2 px-4 py-3 md:py-2 bg-green-600 hover:bg-green-700 disabled:bg-gray-600 disabled:cursor-not-allowed rounded-lg transition-colors text-white font-medium text-sm md:text-base"
                 >
                   <Play size={18} />
@@ -478,6 +529,13 @@ function App() {
                   {status.detection_active ? "停止偵測" : "開始偵測"}
                 </button>
               </div>
+
+              {/* 顯示目前可用攝影機 */}
+              {videoDevices.length > 0 && (
+                <div className="text-sm text-gray-200">
+                  可用攝影機：{videoDevices.length} 台
+                </div>
+              )}
             </div>
           </div>
         </div>
@@ -485,7 +543,7 @@ function App() {
         {/* 視訊顯示區域 */}
         <div className="bg-white/10 backdrop-blur-md rounded-xl p-3 md:p-6 mb-4 md:mb-8">
           <h3 className="text-lg md:text-xl font-semibold mb-3 md:mb-4 text-center">
-            {cameraStarted ? "即時影像偵測" : "攝影機預覽"}
+            {cameraStarted ? "即時影像偵測" : "攝影機初始化中"}
           </h3>
           <div className="flex justify-center">
             <div className="relative">
@@ -503,10 +561,12 @@ function App() {
                     videoConstraints={{
                       width: { ideal: 640 },
                       height: { ideal: 480 },
+                      // 先用 deviceId，若尚未選擇則以 facingMode 作為後備
+                      deviceId: selectedDeviceId ? { exact: selectedDeviceId } : undefined,
                       facingMode:
-                        detectDevice().device_type === "mobile"
-                          ? "user"
-                          : "environment",
+                        !selectedDeviceId && detectDevice().device_type === "mobile"
+                          ? { ideal: "environment" }
+                          : undefined,
                     }}
                     playsInline
                   />
@@ -546,16 +606,20 @@ function App() {
                   <div className="text-center">
                     <Camera size={48} className="mx-auto mb-2 text-gray-500" />
                     {cameraSupported ? (
-                      <p className="text-gray-400">
-                        {cameraReady
-                          ? "點擊「開始攝影」查看即時影像"
-                          : "攝影機準備中..."}
-                      </p>
+                      <p className="text-gray-400">正在請求攝影機權限...</p>
                     ) : (
-                      <p className="text-gray-400">
-                        攝影機不可用：請使用 HTTPS 或 localhost
-                        並使用支援的瀏覽器
-                      </p>
+                      <div className="text-center">
+                        <p className="text-gray-400 mb-2">
+                          {!hasGetUserMedia 
+                            ? "瀏覽器不支援攝影機功能" 
+                            : "攝影機功能不可用"}
+                        </p>
+                        {!hasGetUserMedia && (
+                          <p className="text-sm text-gray-500">
+                            請使用現代瀏覽器（Chrome、Firefox、Safari、Edge）
+                          </p>
+                        )}
+                      </div>
                     )}
                   </div>
                 </div>
@@ -565,9 +629,7 @@ function App() {
 
           {/* 說明文字 */}
           <div className="mt-4 text-center text-sm text-gray-300">
-            {!cameraStarted ? (
-              <p>請先點擊「開始攝影」啟動攝影機</p>
-            ) : !status.detection_active ? (
+            {!status.detection_active ? (
               <p>點擊「開始偵測」查看處理後的影像結果</p>
             ) : (
               <p>綠色邊框顯示處理後的偵測結果</p>

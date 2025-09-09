@@ -8,7 +8,7 @@ import base64
 from typing import Optional
 import json
 from datetime import datetime
-from utils import get_local_ip
+from utils import get_local_ip,get_all_ips
 try:
     from ultralytics import YOLO
 except Exception:
@@ -24,6 +24,7 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
 
 # 請求模型
 
@@ -187,16 +188,27 @@ async def get_status():
     }
 
 if __name__ == "__main__":
-    print(get_local_ip())
+    local_ip = get_local_ip()
+    print(f"🌐 本機IP: {local_ip}")
     print("🚀 啟動影像處理 API 服務")
-    print("📱 API 文檔: http://localhost:8001/docs")
-    print("🌐 局域網存取: http://[您的IP地址]:8001")
+    print("📱 API 文檔:")
+    print(f"   - http://localhost:8000/docs")
+    print(f"   - http://127.0.0.1:8000/docs")
+    print(f"   - http://{local_ip}:8000/docs")
     print("💡 按 Ctrl+C 停止服務")
+
+    # 測試端口是否正確監聽
+    import socket
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    result = sock.connect_ex(('localhost', 8000))
+    if result == 0:
+        print("✅ localhost:8078 可以連接")
+    sock.close()
 
     uvicorn.run(
         "main:app",
         host="0.0.0.0",
-        port=8001,
+        port=8000,
         reload=True,
         log_level="info"
     )

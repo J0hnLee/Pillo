@@ -18,6 +18,8 @@ start.bat
 cd pillo_backend
 pip install -r requirements.txt
 python main.py
+#要關防火牆
+sudo /usr/libexec/ApplicationFirewall/socketfilterfw --setglobalstate off
 
 # 2. 啟動前端 (另開終端)
 cd pillo_frontend

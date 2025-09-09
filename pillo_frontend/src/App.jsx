@@ -37,12 +37,24 @@ function App() {
   const [connectionStatus, setConnectionStatus] = useState("connecting");
   const [isProcessing, setIsProcessing] = useState(false);
   const [debugInfo, setDebugInfo] = useState("");
-  
+
   // Webcam 相關狀態
   const [cameraReady, setCameraReady] = useState(false);
   const [cameraStarted, setCameraStarted] = useState(false);
   const webcamRef = useRef(null);
   const processingIntervalRef = useRef(null);
+
+  // 環境與能力檢查
+  const isSecureContext =
+    (typeof window !== "undefined" && window.isSecureContext) ||
+    (typeof window !== "undefined" &&
+      (window.location.hostname === "localhost" ||
+        window.location.hostname === "127.0.0.1"));
+  const hasGetUserMedia =
+    typeof navigator !== "undefined" &&
+    navigator.mediaDevices &&
+    typeof navigator.mediaDevices.getUserMedia === "function";
+  const cameraSupported = isSecureContext && !!hasGetUserMedia;
 
   // 設備檢測
   const detectDevice = useCallback(() => {
@@ -88,10 +100,10 @@ function App() {
       const response = await fetch(`${API_BASE_URL}/api/status`);
       if (response.ok) {
         const statusData = await response.json();
-        setStatus(prev => ({
+        setStatus((prev) => ({
           ...prev,
           algorithm: statusData.algorithm,
-          timestamp: statusData.timestamp
+          timestamp: statusData.timestamp,
         }));
         setConnectionStatus("connected");
       }
@@ -101,46 +113,49 @@ function App() {
   }, []);
 
   // 處理影像
-  const processImage = useCallback(async (imageData) => {
-    if (!imageData || isProcessing) return;
+  const processImage = useCallback(
+    async (imageData) => {
+      if (!imageData || isProcessing) return;
 
-    try {
-      setIsProcessing(true);
-      const response = await fetch(`${API_BASE_URL}/api/process-image`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          image_data: imageData,
-          algorithm: status.algorithm
-        })
-      });
+      try {
+        setIsProcessing(true);
+        const response = await fetch(`${API_BASE_URL}/api/process-image`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            image_data: imageData,
+            algorithm: status.algorithm,
+          }),
+        });
 
-      if (response.ok) {
-        const result = await response.json();
-        if (result.success) {
-          setProcessedFrame(result.processed_image);
-          setStatus(prev => ({
-            ...prev,
-            count: result.count,
-            timestamp: new Date().toLocaleTimeString()
-          }));
+        if (response.ok) {
+          const result = await response.json();
+          if (result.success) {
+            setProcessedFrame(result.processed_image);
+            setStatus((prev) => ({
+              ...prev,
+              count: result.count,
+              timestamp: new Date().toLocaleTimeString(),
+            }));
+          } else {
+            console.error("影像處理失敗:", result.error);
+            setDebugInfo(`處理失敗: ${result.error}`);
+          }
         } else {
-          console.error("影像處理失敗:", result.error);
-          setDebugInfo(`處理失敗: ${result.error}`);
+          console.error("影像處理請求失敗:", response.status);
+          setDebugInfo(`請求失敗: ${response.status}`);
         }
-      } else {
-        console.error("影像處理請求失敗:", response.status);
-        setDebugInfo(`請求失敗: ${response.status}`);
+      } catch (error) {
+        console.error("影像處理請求失敗:", error);
+        setDebugInfo(`網路錯誤: ${error.message}`);
+      } finally {
+        setIsProcessing(false);
       }
-    } catch (error) {
-      console.error("影像處理請求失敗:", error);
-      setDebugInfo(`網路錯誤: ${error.message}`);
-    } finally {
-      setIsProcessing(false);
-    }
-  }, [status.algorithm, isProcessing]);
+    },
+    [status.algorithm, isProcessing]
+  );
 
   // 捕獲畫面
   const captureFrame = useCallback(() => {
@@ -181,7 +196,7 @@ function App() {
         clearInterval(processingIntervalRef.current);
         processingIntervalRef.current = null;
       }
-      setStatus(prev => ({ ...prev, detection_active: false }));
+      setStatus((prev) => ({ ...prev, detection_active: false }));
       setDebugInfo("偵測已停止");
     } else {
       // 開始偵測
@@ -193,7 +208,7 @@ function App() {
             processImage(frame);
           }
         }, 200); // 5 FPS
-        setStatus(prev => ({ ...prev, detection_active: true }));
+        setStatus((prev) => ({ ...prev, detection_active: true }));
       } else {
         setDebugInfo("無法開始偵測：攝影機未準備好");
       }
@@ -204,15 +219,15 @@ function App() {
   const changeAlgorithm = useCallback(async (algorithm) => {
     try {
       const response = await fetch(`${API_BASE_URL}/api/algorithm/change`, {
-        method: 'POST',
+        method: "POST",
         headers: {
-          'Content-Type': 'application/json',
+          "Content-Type": "application/json",
         },
-        body: JSON.stringify({ algorithm })
+        body: JSON.stringify({ algorithm }),
       });
 
       if (response.ok) {
-        setStatus(prev => ({ ...prev, algorithm }));
+        setStatus((prev) => ({ ...prev, algorithm }));
         setDebugInfo(`算法已更改為: ${algorithm}`);
         console.log(`算法已更改為: ${algorithm}`);
       }
@@ -224,6 +239,13 @@ function App() {
 
   // 開始攝影
   const startCamera = useCallback(() => {
+    if (!cameraSupported) {
+      const reason = !isSecureContext
+        ? "頁面非安全來源。請使用 HTTPS 或 localhost 開啟此網站。"
+        : "瀏覽器不支援 getUserMedia。請更換支援的瀏覽器。";
+      setDebugInfo(`無法啟動攝影機：${reason}`);
+      return;
+    }
     setCameraStarted(true);
     setDebugInfo("攝影機已啟動");
     console.log("攝影機已啟動");
@@ -232,15 +254,15 @@ function App() {
   // 停止攝影
   const stopCamera = useCallback(() => {
     setCameraStarted(false);
-    setStatus(prev => ({ ...prev, detection_active: false }));
+    setStatus((prev) => ({ ...prev, detection_active: false }));
     setProcessedFrame(null);
-    
+
     // 停止偵測
     if (processingIntervalRef.current) {
       clearInterval(processingIntervalRef.current);
       processingIntervalRef.current = null;
     }
-    
+
     setDebugInfo("攝影機已停止");
     console.log("攝影機已停止");
   }, []);
@@ -264,9 +286,15 @@ function App() {
     const initializeApp = async () => {
       await checkConnection();
       await fetchStatus();
+      if (!cameraSupported) {
+        const reason = !isSecureContext
+          ? "頁面非安全來源。請使用 HTTPS 或 localhost 開啟此網站。"
+          : "瀏覽器不支援 getUserMedia。請更換支援的瀏覽器。";
+        setDebugInfo(`攝影機不可用：${reason}`);
+      }
     };
     initializeApp();
-    
+
     const connectionInterval = setInterval(checkConnection, 5000);
     return () => clearInterval(connectionInterval);
   }, [checkConnection, fetchStatus]);
@@ -283,7 +311,7 @@ function App() {
   const getStatusText = () => {
     if (connectionStatus === "error") return "無法連接到服務器";
     if (connectionStatus === "connecting") return "正在連接...";
-    if (!cameraReady) return "攝影機未準備好";
+    if (!cameraSupported) return "瀏覽器不支援或需使用 HTTPS/localhost";
     if (!cameraStarted) return "攝影機已準備，請點擊開始攝影";
     if (status.detection_active) return "正在進行偵測...";
     return "攝影機運行中，偵測已暫停";
@@ -311,7 +339,9 @@ function App() {
                 無法連接到後端服務
               </h2>
               <div className="space-y-4 text-left">
-                <p><strong>API 地址:</strong> {API_BASE_URL}</p>
+                <p>
+                  <strong>API 地址:</strong> {API_BASE_URL}
+                </p>
                 <div className="mt-6">
                   <h3 className="text-lg font-semibold mb-2">解決方案:</h3>
                   <ul className="list-disc list-inside space-y-2">
@@ -346,7 +376,9 @@ function App() {
             <Camera size={24} />
             即時影像偵測系統
           </h1>
-          <div className={`flex items-center justify-center gap-2 text-lg ${getStatusColor()}`}>
+          <div
+            className={`flex items-center justify-center gap-2 text-lg ${getStatusColor()}`}
+          >
             <Wifi size={20} />
             {getStatusText()}
           </div>
@@ -404,7 +436,7 @@ function App() {
               <div className="flex flex-col md:flex-row flex-wrap gap-2 md:gap-3">
                 <button
                   onClick={startCamera}
-                  disabled={!cameraReady || cameraStarted}
+                  disabled={!cameraSupported || !cameraReady || cameraStarted}
                   className="flex items-center justify-center gap-2 px-4 py-3 md:py-2 bg-green-600 hover:bg-green-700 disabled:bg-gray-600 disabled:cursor-not-allowed rounded-lg transition-colors text-white font-medium text-sm md:text-base"
                 >
                   <Play size={18} />
@@ -457,65 +489,80 @@ function App() {
           </h3>
           <div className="flex justify-center">
             <div className="relative">
-              {/* 原始攝影機畫面 - 始終渲染但根據狀態顯示/隱藏 */}
-              <div className={cameraStarted ? "block" : "hidden"}>
-                <Webcam
-                  ref={webcamRef}
-                  audio={false}
-                  width={640}
-                  height={480}
-                  onUserMedia={onUserMedia}
-                  onUserMediaError={onUserMediaError}
-                  className="max-w-full h-auto rounded-lg border-2 border-white/20"
-                  videoConstraints={{
-                    width: { ideal: 640 },
-                    height: { ideal: 480 },
-                    facingMode: detectDevice().device_type === "mobile" ? "user" : "environment"
-                  }}
-                />
-                
-                {/* 處理後的畫面疊加層 - 只在偵測時顯示 */}
-                {status.detection_active && processedFrame && (
-                  <img
-                    src={processedFrame}
-                    alt="處理後的畫面"
-                    className="absolute top-0 left-0 max-w-full h-auto rounded-lg border-2 border-green-400 opacity-80"
-                    style={{ 
-                      width: '100%', 
-                      height: '100%',
-                      objectFit: 'cover',
-                      pointerEvents: 'none'
+              {/* 原始攝影機畫面 - 僅在支援時渲染 */}
+              {cameraSupported && (
+                <div className={cameraStarted ? "block" : "hidden"}>
+                  <Webcam
+                    ref={webcamRef}
+                    audio={false}
+                    width={640}
+                    height={480}
+                    onUserMedia={onUserMedia}
+                    onUserMediaError={onUserMediaError}
+                    className="max-w-full h-auto rounded-lg border-2 border-white/20"
+                    videoConstraints={{
+                      width: { ideal: 640 },
+                      height: { ideal: 480 },
+                      facingMode:
+                        detectDevice().device_type === "mobile"
+                          ? "user"
+                          : "environment",
                     }}
+                    playsInline
                   />
-                )}
-                
-                {/* 狀態指示器 */}
-                <div className="absolute top-2 left-2 bg-black/50 text-white px-2 py-1 rounded text-sm">
-                  {status.detection_active ? "偵測中" : "攝影中"}
-                </div>
-                
-                {/* 偵測數量顯示 */}
-                {status.count > 0 && (
-                  <div className="absolute top-2 right-2 bg-green-600 text-white px-3 py-1 rounded-full text-lg font-bold">
-                    {status.count}
+
+                  {/* 處理後的畫面疊加層 - 只在偵測時顯示 */}
+                  {status.detection_active && processedFrame && (
+                    <img
+                      src={processedFrame}
+                      alt="處理後的畫面"
+                      className="absolute top-0 left-0 max-w-full h-auto rounded-lg border-2 border-green-400 opacity-80"
+                      style={{
+                        width: "100%",
+                        height: "100%",
+                        objectFit: "cover",
+                        pointerEvents: "none",
+                      }}
+                    />
+                  )}
+
+                  {/* 狀態指示器 */}
+                  <div className="absolute top-2 left-2 bg-black/50 text-white px-2 py-1 rounded text-sm">
+                    {status.detection_active ? "偵測中" : "攝影中"}
                   </div>
-                )}
-              </div>
-              
+
+                  {/* 偵測數量顯示 */}
+                  {status.count > 0 && (
+                    <div className="absolute top-2 right-2 bg-green-600 text-white px-3 py-1 rounded-full text-lg font-bold">
+                      {status.count}
+                    </div>
+                  )}
+                </div>
+              )}
+
               {/* 預覽畫面 - 當攝影機未開始時顯示 */}
               {!cameraStarted && (
                 <div className="w-full h-64 bg-gray-800 rounded-lg flex items-center justify-center">
                   <div className="text-center">
                     <Camera size={48} className="mx-auto mb-2 text-gray-500" />
-                    <p className="text-gray-400">
-                      {cameraReady ? "點擊「開始攝影」查看即時影像" : "攝影機準備中..."}
-                    </p>
+                    {cameraSupported ? (
+                      <p className="text-gray-400">
+                        {cameraReady
+                          ? "點擊「開始攝影」查看即時影像"
+                          : "攝影機準備中..."}
+                      </p>
+                    ) : (
+                      <p className="text-gray-400">
+                        攝影機不可用：請使用 HTTPS 或 localhost
+                        並使用支援的瀏覽器
+                      </p>
+                    )}
                   </div>
                 </div>
               )}
             </div>
           </div>
-          
+
           {/* 說明文字 */}
           <div className="mt-4 text-center text-sm text-gray-300">
             {!cameraStarted ? (
@@ -530,11 +577,15 @@ function App() {
 
         {/* 資訊面板 */}
         <div className="mt-6 bg-white/10 backdrop-blur-md rounded-xl p-3 md:p-6">
-          <h3 className="text-lg md:text-xl font-semibold mb-3 md:mb-4">偵測資訊</h3>
+          <h3 className="text-lg md:text-xl font-semibold mb-3 md:mb-4">
+            偵測資訊
+          </h3>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-center">
             <div>
               <p className="text-sm text-gray-300">偵測數量</p>
-              <p className="text-4xl font-bold text-green-400">{status.count}</p>
+              <p className="text-4xl font-bold text-green-400">
+                {status.count}
+              </p>
             </div>
             <div>
               <p className="text-sm text-gray-300">最後更新</p>
@@ -543,8 +594,11 @@ function App() {
             <div>
               <p className="text-sm text-gray-300">當前算法</p>
               <p className="text-lg">
-                {status.algorithm === "algorithm1" ? "算法一" : 
-                 status.algorithm === "algorithm2" ? "算法二" : "算法三"}
+                {status.algorithm === "algorithm1"
+                  ? "算法一"
+                  : status.algorithm === "algorithm2"
+                  ? "算法二"
+                  : "算法三"}
               </p>
             </div>
             <div>

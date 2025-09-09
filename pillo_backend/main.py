@@ -189,14 +189,14 @@ async def get_status():
 if __name__ == "__main__":
     print(get_local_ip())
     print("🚀 啟動影像處理 API 服務")
-    print("📱 API 文檔: http://localhost:8000/docs")
-    print("🌐 局域網存取: http://[您的IP地址]:8000")
+    print("📱 API 文檔: http://localhost:8001/docs")
+    print("🌐 局域網存取: http://[您的IP地址]:8001")
     print("💡 按 Ctrl+C 停止服務")
 
     uvicorn.run(
         "main:app",
         host="0.0.0.0",
-        port=8000,
+        port=8001,
         reload=True,
         log_level="info"
     )

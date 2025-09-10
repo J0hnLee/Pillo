@@ -202,13 +202,13 @@ if __name__ == "__main__":
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     result = sock.connect_ex(('localhost', 8000))
     if result == 0:
-        print("✅ localhost:8078 可以連接")
+        print("✅ localhost:8000 可以連接")
     sock.close()
 
     uvicorn.run(
         "main:app",
         host="0.0.0.0",
-        port=8000,
+        port=8001,
         reload=True,
         log_level="info"
     )

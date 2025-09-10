@@ -14,13 +14,9 @@ import {
 
 // 動態檢測 API 基礎 URL
 const getApiBaseUrl = () => {
-  if (
-    window.location.hostname !== "localhost" &&
-    window.location.hostname !== "127.0.0.1"
-  ) {
-    return `http://${window.location.hostname}:8000`;
-  }
-  return "http://localhost:8000";
+  // 後端始終使用 HTTP localhost 連接（同一台機器）
+  // 這樣可以避免 Mixed Content 問題，因為是 localhost 到 localhost
+  return "http://localhost:8001";
 };
 
 const API_BASE_URL = getApiBaseUrl();

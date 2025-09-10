@@ -50,25 +50,24 @@ function App() {
 
   // 環境與能力檢查
   const isSecureContext =
-    (typeof window !== "undefined" && window.isSecureContext) ||
-    (typeof window !== "undefined" &&
-      (window.location.hostname === "localhost" ||
-        window.location.hostname === "127.0.0.1" ||
-        window.location.hostname?.startsWith("192.168.") ||
-        window.location.hostname?.startsWith("10.") ||
-        window.location.hostname?.startsWith("172.")));
+    typeof window !== "undefined" && window.isSecureContext;
+  const isLocalhost =
+    typeof window !== "undefined" &&
+    (window.location.hostname === "localhost" ||
+      window.location.hostname === "127.0.0.1");
+
   const hasGetUserMedia =
     typeof navigator !== "undefined" &&
     navigator.mediaDevices &&
     typeof navigator.mediaDevices.getUserMedia === "function";
-  
+
   const hasEnumerateDevices =
     typeof navigator !== "undefined" &&
     navigator.mediaDevices &&
     typeof navigator.mediaDevices.enumerateDevices === "function";
-  
-  // 對於區域網使用，放寬安全上下文要求，但需要檢查 API 支援
-  const cameraSupported = !!hasGetUserMedia;
+
+  // 攝影機支援檢查：必須在安全上下文或 localhost 環境下
+  const cameraSupported = hasGetUserMedia && (isSecureContext || isLocalhost);
 
   // 設備檢測
   const detectDevice = useCallback(() => {
@@ -347,21 +346,29 @@ function App() {
       await fetchStatus();
 
       if (!cameraSupported) {
-        const reason = !hasGetUserMedia
-          ? "瀏覽器不支援 getUserMedia。請更換支援的瀏覽器。"
-          : "攝影機功能不可用。";
+        let reason = "";
+        if (!hasGetUserMedia) {
+          reason = "瀏覽器不支援 getUserMedia。請更換支援的瀏覽器。";
+        } else if (!isSecureContext && !isLocalhost) {
+          reason =
+            "攝影機功能需要 HTTPS 連線。在區域網環境下，請使用 HTTPS 或 localhost。";
+        } else {
+          reason = "攝影機功能不可用。";
+        }
         setDebugInfo(`攝影機不可用：${reason}`);
         return;
       }
 
-      // 只有在支援 getUserMedia 時才嘗試請求權限
-      if (hasGetUserMedia) {
-        try {
-          // 先行請求權限，確保 enumerateDevices 取得完整 label
-          await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
-        } catch (err) {
-          console.warn("預請求攝影機權限失敗，但仍嘗試啟動:", err);
-        }
+      // 只有在安全上下文或 localhost 下才嘗試請求權限
+      try {
+        // 先行請求權限，確保 enumerateDevices 取得完整 label
+        await navigator.mediaDevices.getUserMedia({
+          video: true,
+          audio: false,
+        });
+      } catch (err) {
+        console.warn("預請求攝影機權限失敗，但仍嘗試啟動:", err);
+        setDebugInfo(`攝影機權限請求失敗: ${err.message}`);
       }
 
       await enumerateAndSelectCamera();
@@ -372,7 +379,17 @@ function App() {
 
     const connectionInterval = setInterval(checkConnection, 5000);
     return () => clearInterval(connectionInterval);
-  }, [checkConnection, fetchStatus, cameraSupported, isSecureContext, enumerateAndSelectCamera, startCamera, hasGetUserMedia, hasEnumerateDevices]);
+  }, [
+    checkConnection,
+    fetchStatus,
+    cameraSupported,
+    isSecureContext,
+    isLocalhost,
+    enumerateAndSelectCamera,
+    startCamera,
+    hasGetUserMedia,
+    hasEnumerateDevices,
+  ]);
 
   // 清理
   useEffect(() => {
@@ -385,7 +402,8 @@ function App() {
 
   // 監聽裝置變更（熱插拔）
   useEffect(() => {
-    if (!navigator.mediaDevices || !navigator.mediaDevices.addEventListener) return;
+    if (!navigator.mediaDevices || !navigator.mediaDevices.addEventListener)
+      return;
     const handler = () => enumerateAndSelectCamera();
     navigator.mediaDevices.addEventListener("devicechange", handler);
     return () => {
@@ -398,6 +416,9 @@ function App() {
     if (connectionStatus === "connecting") return "正在連接...";
     if (!cameraSupported) {
       if (!hasGetUserMedia) return "瀏覽器不支援攝影機功能";
+      if (!isSecureContext && !isLocalhost) {
+        return "攝影機需要 HTTPS 連線（區域網環境）";
+      }
       return "攝影機功能不可用";
     }
     if (!cameraStarted) return "正在請求攝影機權限/啟動中...";
@@ -562,9 +583,12 @@ function App() {
                       width: { ideal: 640 },
                       height: { ideal: 480 },
                       // 先用 deviceId，若尚未選擇則以 facingMode 作為後備
-                      deviceId: selectedDeviceId ? { exact: selectedDeviceId } : undefined,
+                      deviceId: selectedDeviceId
+                        ? { exact: selectedDeviceId }
+                        : undefined,
                       facingMode:
-                        !selectedDeviceId && detectDevice().device_type === "mobile"
+                        !selectedDeviceId &&
+                        detectDevice().device_type === "mobile"
                           ? { ideal: "environment" }
                           : undefined,
                     }}
@@ -610,8 +634,10 @@ function App() {
                     ) : (
                       <div className="text-center">
                         <p className="text-gray-400 mb-2">
-                          {!hasGetUserMedia 
-                            ? "瀏覽器不支援攝影機功能" 
+                          {!hasGetUserMedia
+                            ? "瀏覽器不支援攝影機功能"
+                            : !isSecureContext && !isLocalhost
+                            ? "攝影機需要 HTTPS 連線"
                             : "攝影機功能不可用"}
                         </p>
                         {!hasGetUserMedia && (
@@ -619,6 +645,15 @@ function App() {
                             請使用現代瀏覽器（Chrome、Firefox、Safari、Edge）
                           </p>
                         )}
+                        {!isSecureContext &&
+                          !isLocalhost &&
+                          hasGetUserMedia && (
+                            <div className="text-sm text-gray-500">
+                              <p className="mb-1">解決方案：</p>
+                              <p>• 使用 localhost 或 127.0.0.1</p>
+                              <p>• 或設定 HTTPS 連線</p>
+                            </div>
+                          )}
                       </div>
                     )}
                   </div>

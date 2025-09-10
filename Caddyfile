@@ -1,0 +1,53 @@
+# Caddy 配置文件 - 用於本地 HTTPS 開發環境
+# 支援區域網攝影機功能
+
+# 前端服務 (React)
+:3000 {
+    # 反向代理到前端開發服務器
+    reverse_proxy localhost:5173
+    
+    # 啟用 CORS
+    header Access-Control-Allow-Origin *
+    header Access-Control-Allow-Methods "GET, POST, PUT, DELETE, OPTIONS"
+    header Access-Control-Allow-Headers "Content-Type, Authorization"
+    
+    # 處理 OPTIONS 預檢請求
+    @options {
+        method OPTIONS
+    }
+    respond @options 200
+}
+
+# 後端 API 服務
+:8000 {
+    # 反向代理到後端服務器
+    reverse_proxy localhost:8001
+    
+    # 啟用 CORS
+    header Access-Control-Allow-Origin *
+    header Access-Control-Allow-Methods "GET, POST, PUT, DELETE, OPTIONS"
+    header Access-Control-Allow-Headers "Content-Type, Authorization"
+    
+    # 處理 OPTIONS 預檢請求
+    @options {
+        method OPTIONS
+    }
+    respond @options 200
+}
+
+# 區域網訪問配置 (替換為您的實際 IP)
+# 例如：192.168.1.100:3000 和 192.168.1.100:8000
+# 取消註釋並修改 IP 地址以支援區域網訪問
+# 192.168.1.100:3000 {
+#     reverse_proxy localhost:5173
+#     header Access-Control-Allow-Origin *
+#     header Access-Control-Allow-Methods "GET, POST, PUT, DELETE, OPTIONS"
+#     header Access-Control-Allow-Headers "Content-Type, Authorization"
+# }
+# 
+# 192.168.1.100:8000 {
+#     reverse_proxy localhost:8001
+#     header Access-Control-Allow-Origin *
+#     header Access-Control-Allow-Methods "GET, POST, PUT, DELETE, OPTIONS"
+#     header Access-Control-Allow-Headers "Content-Type, Authorization"
+# }

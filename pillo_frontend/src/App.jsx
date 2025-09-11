@@ -16,7 +16,7 @@ import {
 const getApiBaseUrl = () => {
   // 後端始終使用 HTTP localhost 連接（同一台機器）
   // 這樣可以避免 Mixed Content 問題，因為是 localhost 到 localhost
-  return "http://localhost:8001";
+  return `${window.location.protocol}//${window.location.hostname}:8000`;
 };
 
 const API_BASE_URL = getApiBaseUrl();
@@ -43,6 +43,7 @@ function App() {
   // 新增：裝置列舉與選擇
   const [videoDevices, setVideoDevices] = useState([]);
   const [selectedDeviceId, setSelectedDeviceId] = useState(null);
+  const [retryCount, setRetryCount] = useState(0);
 
   // 環境與能力檢查
   const isSecureContext =
@@ -249,45 +250,6 @@ function App() {
     }
   }, []);
 
-  // 新增：列舉裝置並選擇最佳攝影機
-  const enumerateAndSelectCamera = useCallback(async () => {
-    if (!hasEnumerateDevices) {
-      console.warn("瀏覽器不支援 enumerateDevices API");
-      setVideoDevices([]);
-      setSelectedDeviceId(null);
-      return;
-    }
-
-    try {
-      const devices = await navigator.mediaDevices.enumerateDevices();
-      const videoInputs = devices.filter((d) => d.kind === "videoinput");
-      setVideoDevices(videoInputs);
-
-      if (videoInputs.length === 0) {
-        setSelectedDeviceId(null);
-        return;
-      }
-
-      const deviceType = detectDevice().device_type;
-
-      // 嘗試優先選擇後鏡頭（從 label 推斷；需先取得權限才會有 label）
-      let preferred = null;
-      if (deviceType === "mobile") {
-        preferred =
-          videoInputs.find((d) => /back|rear|environment/i.test(d.label)) ||
-          null;
-      }
-
-      // 桌機或找不到後鏡頭就用第一個
-      const chosen = preferred || videoInputs[0];
-      setSelectedDeviceId(chosen.deviceId || null);
-    } catch (err) {
-      console.error("列舉裝置失敗:", err);
-      setVideoDevices([]);
-      setSelectedDeviceId(null);
-    }
-  }, [detectDevice, hasEnumerateDevices]);
-
   // 開始攝影（可重用）
   const startCamera = useCallback(() => {
     if (!cameraSupported) {
@@ -301,6 +263,108 @@ function App() {
     setDebugInfo("攝影機已啟動");
     console.log("攝影機已啟動");
   }, [cameraSupported, hasGetUserMedia]);
+
+  // 切換攝影機
+  const changeCamera = useCallback(
+    (deviceId) => {
+      setSelectedDeviceId(deviceId);
+      setDebugInfo(
+        `攝影機已切換為: ${
+          videoDevices.find((d) => d.deviceId === deviceId)?.friendlyLabel ||
+          "未知攝影機"
+        }`
+      );
+
+      // 如果攝影機正在運行，需要重新啟動
+      if (cameraStarted) {
+        setCameraStarted(false);
+        setCameraReady(false);
+        setStatus((prev) => ({ ...prev, detection_active: false }));
+
+        // 停止偵測
+        if (processingIntervalRef.current) {
+          clearInterval(processingIntervalRef.current);
+          processingIntervalRef.current = null;
+        }
+
+        // 延遲重新啟動攝影機
+        setTimeout(() => {
+          startCamera();
+        }, 500);
+      }
+    },
+    [videoDevices, cameraStarted, startCamera]
+  );
+
+  // 新增：列舉裝置並選擇最佳攝影機
+  const enumerateAndSelectCamera = useCallback(async () => {
+    if (!hasEnumerateDevices) {
+      console.warn("瀏覽器不支援 enumerateDevices API");
+      setVideoDevices([]);
+      setSelectedDeviceId(null);
+      return;
+    }
+
+    try {
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      const videoInputs = devices.filter((d) => d.kind === "videoinput");
+
+      // 為每個攝影機添加更友善的標籤
+      const enhancedDevices = videoInputs.map((device, index) => {
+        let friendlyLabel = device.label || `攝影機 ${index + 1}`;
+
+        // 檢測攝影機類型
+        const isRearCamera = /back|rear|environment/i.test(device.label);
+        const isFrontCamera = /front|user|facing/i.test(device.label);
+
+        if (isRearCamera) {
+          friendlyLabel = `📷 後置鏡頭 (${device.label})`;
+        } else if (isFrontCamera) {
+          friendlyLabel = `🤳 前置鏡頭 (${device.label})`;
+        } else if (device.label) {
+          friendlyLabel = `📹 ${device.label}`;
+        } else {
+          friendlyLabel = `📹 攝影機 ${index + 1}`;
+        }
+
+        return {
+          ...device,
+          friendlyLabel,
+          isRearCamera,
+          isFrontCamera,
+        };
+      });
+
+      setVideoDevices(enhancedDevices);
+
+      if (enhancedDevices.length === 0) {
+        setSelectedDeviceId(null);
+        return;
+      }
+
+      const deviceType = detectDevice().device_type;
+
+      // 優先選擇後置鏡頭（手機環境）
+      let preferred = null;
+      if (deviceType === "mobile") {
+        preferred = enhancedDevices.find((d) => d.isRearCamera);
+      }
+
+      // 如果沒有後置鏡頭，選擇第一個
+      const chosen = preferred || enhancedDevices[0];
+      setSelectedDeviceId(chosen.deviceId || null);
+
+      console.log(
+        "可用攝影機:",
+        enhancedDevices.map((d) => d.friendlyLabel)
+      );
+      console.log("選擇的攝影機:", chosen.friendlyLabel);
+    } catch (err) {
+      console.error("列舉裝置失敗:", err);
+      setVideoDevices([]);
+      setSelectedDeviceId(null);
+    }
+  }, [detectDevice, hasEnumerateDevices]);
 
   // 停止攝影
   const stopCamera = useCallback(() => {
@@ -328,12 +392,50 @@ function App() {
     enumerateAndSelectCamera();
   }, [enumerateAndSelectCamera]);
 
-  const onUserMediaError = useCallback((error) => {
-    console.error("攝影機錯誤:", error);
-    setDebugInfo(`攝影機錯誤: ${error.message || error.name}`);
-    setCameraReady(false);
-    setCameraStarted(false);
-  }, []);
+  const onUserMediaError = useCallback(
+    (error) => {
+      console.error("攝影機錯誤:", error);
+
+      let errorMessage = error.message || error.name;
+
+      // 處理特定的錯誤類型
+      if (error.name === "OverconstrainedError") {
+        if (retryCount < 2) {
+          // 嘗試重試，放寬約束條件
+          setRetryCount((prev) => prev + 1);
+          errorMessage = `攝影機約束條件無法滿足，正在嘗試更寬鬆的設定 (${
+            retryCount + 1
+          }/3)`;
+          setDebugInfo(errorMessage);
+
+          // 延遲重試
+          setTimeout(() => {
+            setCameraStarted(false);
+            setTimeout(() => {
+              startCamera();
+            }, 500);
+          }, 1000);
+          return;
+        } else {
+          errorMessage = "攝影機約束條件無法滿足，已嘗試所有設定";
+          setSelectedDeviceId(null);
+          setRetryCount(0);
+        }
+      } else if (error.name === "NotAllowedError") {
+        errorMessage = "攝影機權限被拒絕，請允許攝影機存取";
+      } else if (error.name === "NotFoundError") {
+        errorMessage = "找不到攝影機，請檢查攝影機連接";
+      } else if (error.name === "NotReadableError") {
+        errorMessage = "攝影機被其他應用程式使用中";
+      }
+
+      setDebugInfo(`攝影機錯誤: ${errorMessage}`);
+      setCameraReady(false);
+      setCameraStarted(false);
+      setRetryCount(0);
+    },
+    [retryCount, startCamera]
+  );
 
   // 初始化：檢查連線、狀態、並自動請求攝影機權限與啟動
   useEffect(() => {
@@ -501,6 +603,31 @@ function App() {
             {/* 控制按鈕 */}
             <div className="space-y-4">
               <h3 className="text-lg font-semibold">系統控制</h3>
+
+              {/* 攝影機選擇 */}
+              {videoDevices.length > 1 && (
+                <div className="space-y-2">
+                  <label className="text-sm font-medium text-gray-200">
+                    選擇攝影機
+                  </label>
+                  <select
+                    value={selectedDeviceId || ""}
+                    onChange={(e) => changeCamera(e.target.value)}
+                    className="w-full px-3 py-2 bg-white/10 border border-white/20 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  >
+                    {videoDevices.map((device) => (
+                      <option
+                        key={device.deviceId}
+                        value={device.deviceId}
+                        className="bg-gray-800 text-white"
+                      >
+                        {device.friendlyLabel}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
+
               <div className="flex flex-col md:flex-row flex-wrap gap-2 md:gap-3">
                 <button
                   onClick={startCamera}
@@ -547,10 +674,20 @@ function App() {
                 </button>
               </div>
 
-              {/* 顯示目前可用攝影機 */}
+              {/* 顯示目前可用攝影機資訊 */}
               {videoDevices.length > 0 && (
-                <div className="text-sm text-gray-200">
-                  可用攝影機：{videoDevices.length} 台
+                <div className="text-sm text-gray-200 space-y-1">
+                  <div>可用攝影機：{videoDevices.length} 台</div>
+                  {selectedDeviceId && (
+                    <div className="text-blue-300">
+                      當前使用：
+                      {
+                        videoDevices.find(
+                          (d) => d.deviceId === selectedDeviceId
+                        )?.friendlyLabel
+                      }
+                    </div>
+                  )}
                 </div>
               )}
             </div>
@@ -575,19 +712,35 @@ function App() {
                     onUserMedia={onUserMedia}
                     onUserMediaError={onUserMediaError}
                     className="max-w-full h-auto rounded-lg border-2 border-white/20"
-                    videoConstraints={{
-                      width: { ideal: 640 },
-                      height: { ideal: 480 },
-                      // 先用 deviceId，若尚未選擇則以 facingMode 作為後備
-                      deviceId: selectedDeviceId
-                        ? { exact: selectedDeviceId }
-                        : undefined,
-                      facingMode:
+                    videoConstraints={(() => {
+                      // 根據重試次數逐步放寬約束
+                      const constraints = {
+                        width:
+                          retryCount === 0
+                            ? { ideal: 640, min: 320 }
+                            : { min: 320 },
+                        height:
+                          retryCount === 0
+                            ? { ideal: 480, min: 240 }
+                            : { min: 240 },
+                      };
+
+                      // 只有在第一次嘗試時才使用特定的攝影機 ID
+                      if (retryCount === 0 && selectedDeviceId) {
+                        constraints.deviceId = { ideal: selectedDeviceId };
+                      }
+
+                      // 只有在第一次嘗試且是手機時才指定 facingMode
+                      if (
+                        retryCount === 0 &&
                         !selectedDeviceId &&
                         detectDevice().device_type === "mobile"
-                          ? { ideal: "environment" }
-                          : undefined,
-                    }}
+                      ) {
+                        constraints.facingMode = { ideal: "environment" };
+                      }
+
+                      return constraints;
+                    })()}
                     playsInline
                   />
 

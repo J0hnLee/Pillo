@@ -1,0 +1,55 @@
+version: "3.8"
+
+services:
+  # 前端服務
+  pillo-frontend:
+    build:
+      context: ./pillo_frontend
+      dockerfile: Dockerfile
+    container_name: pillo-frontend
+    ports:
+      - "5173:5173"
+    networks:
+      - pillo-network
+    restart: unless-stopped
+
+  # 後端服務
+  pillo-backend:
+    build:
+      context: ./pillo_backend
+      dockerfile: Dockerfile
+    container_name: pillo-backend
+    ports:
+      - "8000:8000"
+    networks:
+      - pillo-network
+    restart: unless-stopped
+    volumes:
+      # 如果需要持久化模型文件或其他數據
+      - ./pillo_backend/my_model.pt:/app/my_model.pt:ro
+
+  # Caddy 反向代理
+  caddy:
+    image: caddy:2-alpine
+    container_name: pillo-caddy
+    ports:
+      - "3001:3001"
+      - "2019:2019" # Caddy admin API
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    networks:
+      - pillo-network
+    depends_on:
+      - pillo-frontend
+      - pillo-backend
+    restart: unless-stopped
+
+networks:
+  pillo-network:
+    driver: bridge
+
+volumes:
+  caddy_data:
+  caddy_config:

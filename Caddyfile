@@ -4,12 +4,14 @@
 {
 	# 啟用本地 CA（自簽證書）
 	local_certs
+	# 禁用自動 HTTP 到 HTTPS 重定向（避免端口衝突）
+	auto_https off
 }
 
-# 本機 HTTPS 訪問
+# 本機 HTTPS 訪問 - 連接 Docker 化的前端
 localhost:3001 {
 	tls internal
-	reverse_proxy localhost:5173
+	reverse_proxy pillo-frontend:5173
 
 	# 支援攝影鏡頭的 headers
 	header {
@@ -21,10 +23,10 @@ localhost:3001 {
 	}
 }
 
-# 區域網 HTTPS 訪問 - 使用你的實際 IP
+# 區域網 HTTPS 訪問 - 連接 Docker 化的前端
 192.168.31.231:3001 {
 	tls internal
-	reverse_proxy localhost:5173
+	reverse_proxy pillo-frontend:5173
 
 	# 支援攝影鏡頭的 headers
 	header {

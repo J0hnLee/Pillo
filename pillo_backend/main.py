@@ -8,7 +8,7 @@ import base64
 from typing import Optional
 import json
 from datetime import datetime
-from utils import get_local_ip,get_all_ips
+from utils import get_local_ip, get_all_ips
 try:
     from ultralytics import YOLO
 except Exception:
@@ -208,7 +208,7 @@ if __name__ == "__main__":
     uvicorn.run(
         "main:app",
         host="0.0.0.0",
-        port=8001,
+        port=8000,
         reload=True,
         log_level="info"
     )

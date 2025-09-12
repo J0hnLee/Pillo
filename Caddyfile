@@ -26,7 +26,7 @@ https://localhost:3000 {
 }
 
 # 區域網 HTTPS 訪問 - 使用不同端口避免衝突
-https://192.168.0.69:3001 {
+https://192.168.0.5:3001 {
 	tls internal 
 	reverse_proxy localhost:5173
 
